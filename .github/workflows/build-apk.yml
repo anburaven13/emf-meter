@@ -37,10 +37,13 @@ jobs:
       - name: Build web application
         run: npm run build
 
-      - name: Set up Android SDK
+      - name: Set up Android SDK (API 36)
         uses: android-actions/setup-android@v4
         with:
-          packages: 'platforms;android-35 build-tools;35.0.0'
+          packages: 'platforms;android-36 build-tools;36.0.0'
+
+      - name: Accept Android SDK Licenses
+        run: yes | sdkmanager --licenses || true
 
       - name: Sync Capacitor Android Project
         run: npx cap sync android
