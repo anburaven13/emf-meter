@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">EMF Meter</string>
+    <string name="title_activity_main">EMF Meter</string>
+    <string name="package_name">com.ghostemf.meter</string>
+    <string name="custom_url_scheme">com.ghostemf.meter</string>
+</resources>
