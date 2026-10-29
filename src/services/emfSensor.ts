@@ -19,15 +19,25 @@ declare global {
   }
 }
 
+export type SensitivityLevel = 'low' | 'normal' | 'high';
+
 export class EmfSensorService {
   private listeners: Set<Listener> = new Set();
   private magnetometer: GenericMagnetometer | null = null;
   private isRunning: boolean = false;
   private isSimulationMode: boolean = false;
-  private baselineMagnitude: number = 45.0; // Typical Earth baseline in µT
+
+  // Auto-calibration state
+  private baselineMagnitude: number = 0;
+  private calibrationSamples: number[] = [];
+  private isCalibrated: boolean = false;
+  private calibrationTargetSamples: number = 15;
+
+  private sensitivity: SensitivityLevel = 'normal';
   private simulationInterval: number | null = null;
   private simTargetMagnitude: number = 45.0;
   private simCurrentMagnitude: number = 45.0;
+
   private lastReading: SensorReading = {
     x: 0,
     y: 0,
@@ -36,7 +46,7 @@ export class EmfSensorService {
     deltaMagnitude: 0,
     milliGauss: 0,
     level: 1,
-    timestamp: Date.now(),
+    timestamp: 0,
   };
 
   constructor() {
@@ -49,6 +59,14 @@ export class EmfSensorService {
     return () => {
       this.listeners.delete(listener);
     };
+  }
+
+  public setSensitivity(level: SensitivityLevel) {
+    this.sensitivity = level;
+  }
+
+  public getSensitivity(): SensitivityLevel {
+    return this.sensitivity;
   }
 
   public setSimulationMode(enabled: boolean) {
@@ -65,13 +83,17 @@ export class EmfSensorService {
   }
 
   public setSimulatedSpike(targetMg: number) {
-    // Convert desired delta mG to µT added to baseline
     this.simTargetMagnitude = this.baselineMagnitude + targetMg * 0.1;
   }
 
+  /**
+   * Manual Tare / Calibrate:
+   * Sets current ambient reading as baseline zero
+   */
   public calibrate() {
-    // Tare: Set current raw magnitude as the baseline zero
+    this.calibrationSamples = [];
     this.baselineMagnitude = this.lastReading.magnitude;
+    this.isCalibrated = true;
     this.processReading(this.lastReading.x, this.lastReading.y, this.lastReading.z);
   }
 
@@ -82,13 +104,15 @@ export class EmfSensorService {
   public async start(): Promise<{ success: boolean; mode: 'native' | 'orientation' | 'simulation' }> {
     if (this.isRunning) return { success: true, mode: this.isSimulationMode ? 'simulation' : 'native' };
     this.isRunning = true;
+    this.isCalibrated = false;
+    this.calibrationSamples = [];
 
     if (this.isSimulationMode) {
       this.startSimulator();
       return { success: true, mode: 'simulation' };
     }
 
-    // 1. Try Native W3C Generic Sensor API (Supported in Android Chrome with flags or secure origin)
+    // 1. Try Native W3C Generic Sensor API (Chrome / Android WebView)
     if (typeof window !== 'undefined' && 'Magnetometer' in window && window.Magnetometer) {
       try {
         const mag = new window.Magnetometer({ frequency: 50 });
@@ -104,17 +128,17 @@ export class EmfSensorService {
         this.magnetometer = mag;
         return { success: true, mode: 'native' };
       } catch {
-        // Fallback below
+        // Fallback
       }
     }
 
-    // 2. Try DeviceOrientation / DeviceMotion as fallback
+    // 2. Try DeviceOrientation as fallback
     const fallbackSuccess = this.fallbackToOrientation();
     if (fallbackSuccess) {
       return { success: true, mode: 'orientation' };
     }
 
-    // 3. If no hardware sensor is available (e.g. desktop), auto-switch to simulator
+    // 3. Fallback to Simulator if no sensor found
     this.isSimulationMode = true;
     this.startSimulator();
     return { success: true, mode: 'simulation' };
@@ -129,7 +153,6 @@ export class EmfSensorService {
   }
 
   private handleOrientation(event: DeviceOrientationEvent) {
-    // Generate derived magnetic vector approximation based on device compass heading
     const alpha = (event.alpha || 0) * (Math.PI / 180);
     const beta = (event.beta || 0) * (Math.PI / 180);
     const gamma = (event.gamma || 0) * (Math.PI / 180);
@@ -144,25 +167,27 @@ export class EmfSensorService {
 
   private startSimulator() {
     if (this.simulationInterval) clearInterval(this.simulationInterval);
+    this.baselineMagnitude = 45.0;
+    this.simCurrentMagnitude = 45.0;
+    this.simTargetMagnitude = 45.0;
+    this.isCalibrated = true;
 
     this.simulationInterval = window.setInterval(() => {
-      // Smoothly interpolate towards target magnitude with realistic magnetic noise
-      const noise = (Math.random() - 0.5) * 0.4;
+      const noise = (Math.random() - 0.5) * 0.15;
       this.simCurrentMagnitude += (this.simTargetMagnitude - this.simCurrentMagnitude) * 0.15;
       
-      // Gradually decay spike back to baseline
+      // Decay spike back to baseline
       if (Math.abs(this.simTargetMagnitude - this.baselineMagnitude) > 0.05) {
         this.simTargetMagnitude += (this.baselineMagnitude - this.simTargetMagnitude) * 0.04;
       }
 
       const current = Math.max(0, this.simCurrentMagnitude + noise);
-      // Synthesize 3D coordinates
       const x = current * 0.4;
       const y = current * 0.3;
       const z = Math.sqrt(Math.max(0, current * current - x * x - y * y));
 
       this.processReading(x, y, z);
-    }, 40); // 25 Hz update rate
+    }, 50);
   }
 
   public stop() {
@@ -185,18 +210,43 @@ export class EmfSensorService {
   }
 
   private processReading(x: number, y: number, z: number) {
-    const magnitude = Math.sqrt(x * x + y * y + z * z);
+    const rawMagnitude = Math.sqrt(x * x + y * y + z * z);
+
+    // Auto-Tare on first samples so app NEVER starts stuck at Level 5/beeping!
+    if (!this.isCalibrated) {
+      this.calibrationSamples.push(rawMagnitude);
+      if (this.calibrationSamples.length >= this.calibrationTargetSamples) {
+        const sum = this.calibrationSamples.reduce((a, b) => a + b, 0);
+        this.baselineMagnitude = sum / this.calibrationSamples.length;
+        this.isCalibrated = true;
+      } else {
+        // While calibrating (first 500ms), assume baseline is current reading
+        this.baselineMagnitude = rawMagnitude;
+      }
+    }
+
     // Delta from calibrated baseline in µT
-    const deltaMagnitude = Math.abs(magnitude - this.baselineMagnitude);
+    let deltaMagnitude = Math.abs(rawMagnitude - this.baselineMagnitude);
+
+    // Apply sensitivity multiplier
+    const multiplier = this.sensitivity === 'low' ? 0.6 : this.sensitivity === 'high' ? 1.5 : 1.0;
+    deltaMagnitude *= multiplier;
+
     // 1 µT = 10 milliGauss
-    const milliGauss = deltaMagnitude * 10;
+    let milliGauss = deltaMagnitude * 10;
+
+    // Noise gate: ignore sensor jitter below 1.2 mG so it stays at silent Level 1
+    if (milliGauss < 1.2) {
+      milliGauss = 0;
+    }
+
     const level = getLedLevel(milliGauss);
 
     const reading: SensorReading = {
       x,
       y,
       z,
-      magnitude,
+      magnitude: rawMagnitude,
       deltaMagnitude,
       milliGauss,
       level,

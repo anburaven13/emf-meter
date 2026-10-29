@@ -1,19 +1,46 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { K2_LED_CONFIG } from '../types/emf';
 import type { SensorReading } from '../types/emf';
+import type { SensitivityLevel } from '../services/emfSensor';
+import { Volume2, VolumeX, Radio, Gauge } from 'lucide-react';
+import { soundAlertService } from '../services/soundAlert';
 
 interface K2LedMeterProps {
   reading: SensorReading;
   onCalibrate: () => void;
   isCalibrating?: boolean;
+  sensitivity: SensitivityLevel;
+  onSensitivityChange: (s: SensitivityLevel) => void;
 }
 
 export const K2LedMeter: React.FC<K2LedMeterProps> = ({
   reading,
   onCalibrate,
   isCalibrating = false,
+  sensitivity,
+  onSensitivityChange,
 }) => {
   const currentLevel = reading.level;
+  const [isMuted, setIsMuted] = useState<boolean>(soundAlertService.getIsMuted());
+  const [soundMode, setSoundMode] = useState<'clicker' | 'beep'>(soundAlertService.getSoundMode());
+  const [isItcActive, setIsItcActive] = useState<boolean>(soundAlertService.getIsItcActive());
+
+  const toggleMute = () => {
+    const next = !isMuted;
+    setIsMuted(next);
+    soundAlertService.setMuted(next);
+  };
+
+  const toggleSoundMode = () => {
+    const next = soundMode === 'clicker' ? 'beep' : 'clicker';
+    setSoundMode(next);
+    soundAlertService.setSoundMode(next);
+  };
+
+  const toggleItc = () => {
+    const active = soundAlertService.toggleItcSweep();
+    setIsItcActive(active);
+  };
 
   return (
     <div className="relative flex flex-col items-center justify-start select-none w-full max-w-[340px] mx-auto">
@@ -28,6 +55,45 @@ export const K2LedMeter: React.FC<K2LedMeterProps> = ({
       >
         {/* Chassis Top Ridge Bevel */}
         <div className="w-[85%] h-2 bg-[#121315] rounded-full mb-3 opacity-60 shadow-inner" />
+
+        {/* Quick Meter Hardware Bar: Mute | Sound Mode | ITC Ghost Box */}
+        <div className="w-full flex items-center justify-between px-2 mb-3">
+          {/* Mute Button */}
+          <button
+            onClick={toggleMute}
+            className={`flex items-center space-x-1 px-2.5 py-1 rounded-lg text-[10px] font-bold tracking-wider uppercase transition-all cursor-pointer ${
+              isMuted
+                ? 'bg-red-950/70 border border-red-800 text-red-300'
+                : 'bg-emerald-950/70 border border-emerald-700 text-emerald-300'
+            }`}
+          >
+            {isMuted ? <VolumeX className="w-3 h-3" /> : <Volume2 className="w-3 h-3" />}
+            <span>{isMuted ? 'Muted' : 'Sound On'}</span>
+          </button>
+
+          {/* Clicker vs Beep Selector */}
+          <button
+            onClick={toggleSoundMode}
+            className="px-2 py-1 rounded-lg bg-[#141518] border border-neutral-700 text-[10px] text-neutral-300 font-mono hover:text-white cursor-pointer"
+            title="Toggle between Geiger Clicker and Alert Tone"
+          >
+            Mode: <strong className="text-yellow-400 capitalize">{soundMode}</strong>
+          </button>
+
+          {/* Spain Paranormal ITC / Ghost Box Audio Sweep */}
+          <button
+            onClick={toggleItc}
+            className={`flex items-center space-x-1 px-2.5 py-1 rounded-lg text-[10px] font-bold tracking-wider uppercase transition-all cursor-pointer ${
+              isItcActive
+                ? 'bg-purple-900/80 border border-purple-500 text-purple-200 animate-pulse'
+                : 'bg-neutral-900 border border-neutral-700 text-neutral-400 hover:text-neutral-200'
+            }`}
+            title="Spain Paranormal Radio Sweep Sound Generator"
+          >
+            <Radio className="w-3 h-3" />
+            <span>{isItcActive ? 'ITC Sweep' : 'ITC Off'}</span>
+          </button>
+        </div>
 
         {/* Meter Display Window Inset */}
         <div
@@ -48,7 +114,6 @@ export const K2LedMeter: React.FC<K2LedMeterProps> = ({
           <div className="relative z-10 w-full flex justify-around items-end pt-2 pb-3 px-1">
             {K2_LED_CONFIG.map((led, index) => {
               const isActive = currentLevel >= led.level;
-              // Slightly curve the LEDs vertically like the physical curved meter
               const verticalOffsets = [10, 3, 0, 3, 10];
               const yOffset = verticalOffsets[index];
 
@@ -112,12 +177,35 @@ export const K2LedMeter: React.FC<K2LedMeterProps> = ({
           </div>
         </div>
 
+        {/* Sensitivity Selector Buttons */}
+        <div className="w-full flex items-center justify-between px-3 mt-4 pt-2 border-t border-neutral-800/80">
+          <span className="text-[11px] font-mono text-neutral-400 flex items-center gap-1">
+            <Gauge className="w-3.5 h-3.5 text-neutral-400" />
+            Sensitivity:
+          </span>
+          <div className="flex space-x-1 bg-[#111215] p-1 rounded-xl border border-neutral-800">
+            {(['low', 'normal', 'high'] as SensitivityLevel[]).map((level) => (
+              <button
+                key={level}
+                onClick={() => onSensitivityChange(level)}
+                className={`px-2.5 py-0.5 rounded-lg text-[10px] font-mono font-bold uppercase transition-all cursor-pointer ${
+                  sensitivity === level
+                    ? 'bg-neutral-700 text-emerald-400 shadow'
+                    : 'text-neutral-500 hover:text-neutral-300'
+                }`}
+              >
+                {level}
+              </button>
+            ))}
+          </div>
+        </div>
+
         {/* Central Recessed Button Pad (Thumb indentation with arrows) */}
         <button
           onClick={onCalibrate}
           disabled={isCalibrating}
-          title="Tap to Tare / Calibrate Earth Geomagnetic Baseline"
-          className="relative mt-8 w-28 h-32 rounded-2xl bg-[#17181a] border-2 border-[#2c2e33] flex flex-col items-center justify-center cursor-pointer active:scale-95 transition-all group overflow-hidden"
+          title="Tap to Tare / Zero Ambient Geomagnetic Field"
+          className="relative mt-5 w-28 h-28 rounded-2xl bg-[#17181a] border-2 border-[#2c2e33] flex flex-col items-center justify-center cursor-pointer active:scale-95 transition-all group overflow-hidden"
           style={{
             boxShadow: 'inset 0 3px 8px rgba(0,0,0,0.85), 0 2px 4px rgba(255,255,255,0.05)',
           }}
@@ -129,13 +217,13 @@ export const K2LedMeter: React.FC<K2LedMeterProps> = ({
             <div className="w-5 h-2 border-t-2 border-l-2 border-neutral-400 rotate-45" />
           </div>
 
-          <span className="mt-3 text-[10px] font-semibold text-neutral-400 tracking-wider uppercase group-hover:text-emerald-400 transition-colors">
-            {isCalibrating ? 'Calibrating...' : 'Tare / Calibrate'}
+          <span className="mt-2 text-[10px] font-semibold text-neutral-400 tracking-wider uppercase group-hover:text-emerald-400 transition-colors">
+            {isCalibrating ? 'Zeroing...' : 'Tare / Zero'}
           </span>
         </button>
 
         {/* Live Digital Telemetry readout */}
-        <div className="mt-6 w-full flex items-center justify-between px-3 py-2 bg-[#111214] rounded-xl border border-[#2a2b2f]">
+        <div className="mt-5 w-full flex items-center justify-between px-3 py-2 bg-[#111214] rounded-xl border border-[#2a2b2f]">
           <div className="flex flex-col">
             <span className="text-[10px] uppercase font-mono text-neutral-400">Flux Delta</span>
             <span className="text-lg font-mono font-bold text-emerald-400">
@@ -154,7 +242,7 @@ export const K2LedMeter: React.FC<K2LedMeterProps> = ({
         </div>
 
         {/* Chassis Lower Taper Grip Accents */}
-        <div className="w-full flex justify-between px-2 mt-4 opacity-40">
+        <div className="w-full flex justify-between px-2 mt-3 opacity-40">
           <div className="w-1.5 h-6 bg-[#3a3d42] rounded-full" />
           <div className="w-1.5 h-6 bg-[#3a3d42] rounded-full" />
         </div>

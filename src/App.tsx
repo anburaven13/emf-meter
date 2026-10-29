@@ -6,6 +6,7 @@ import { SensorControls } from './components/SensorControls';
 import { emfSensorService } from './services/emfSensor';
 import { soundAlertService } from './services/soundAlert';
 import type { SensorReading } from './types/emf';
+import type { SensitivityLevel } from './services/emfSensor';
 import { Activity, Info, ShieldAlert, Sparkles } from 'lucide-react';
 
 export const App: React.FC = () => {
@@ -21,6 +22,7 @@ export const App: React.FC = () => {
   }));
 
   const [peakMg, setPeakMg] = useState<number>(0);
+  const [sensitivity, setSensitivity] = useState<SensitivityLevel>('normal');
   const [sensorMode, setSensorMode] = useState<'native' | 'orientation' | 'simulation'>('simulation');
   const [isSimulating, setIsSimulating] = useState<boolean>(true);
   const [isCalibrating, setIsCalibrating] = useState<boolean>(false);
@@ -59,6 +61,11 @@ export const App: React.FC = () => {
       setIsCalibrating(false);
     }, 600);
   }, []);
+
+  const handleSensitivityChange = (newSens: SensitivityLevel) => {
+    setSensitivity(newSens);
+    emfSensorService.setSensitivity(newSens);
+  };
 
   const handleToggleSimulation = (enabled: boolean) => {
     setIsSimulating(enabled);
@@ -156,6 +163,8 @@ export const App: React.FC = () => {
               reading={reading}
               onCalibrate={handleCalibrate}
               isCalibrating={isCalibrating}
+              sensitivity={sensitivity}
+              onSensitivityChange={handleSensitivityChange}
             />
 
             {/* Quick Spike Test Buttons right below meter */}
